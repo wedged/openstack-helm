@@ -7,6 +7,9 @@ function osd_disk_prepare {
     exit 1
   fi
 
+  OSD_DEVICE=$(hw_to_block ${OSD_DEVICE})
+  OSD_DEVICE=`readlink -f ${OSD_DEVICE}`
+
   if [[ ! -e "${OSD_DEVICE}" ]]; then
     log "ERROR- The device pointed by OSD_DEVICE ($OSD_DEVICE) doesn't exist !"
     exit 1
@@ -44,9 +47,32 @@ function osd_disk_prepare {
     fi
   fi
 
+  if [ -n "${OSD_JOURNAL}" ]; then
+    OSD_JOURNAL=$(hw_to_block ${OSD_JOURNAL})
+    if [ -b $OSD_JOURNAL ]; then
+      OSD_JOURNAL=`readlink -f ${OSD_JOURNAL}`
+      OSD_JOURNAL_PARTITION=`echo $OSD_JOURNAL_PARTITION | sed 's/[^0-9]//g'`
+      if [ -z "${OSD_JOURNAL_PARTITION}" ]; then
+        # maybe they specified the journal as a /dev path like '/dev/sdc12':
+        local JDEV=`echo ${OSD_JOURNAL} | sed 's/\(.*[^0-9]\)[0-9]*$/\1/'`
+        if [ -d /sys/block/`basename $JDEV`/`basename $OSD_JOURNAL` ]; then
+          OSD_JOURNAL=$(dev_part ${JDEV} `echo ${OSD_JOURNAL} | sed 's/.*[^0-9]\([0-9]*\)$/\1/'`)
+        fi
+      else
+        OSD_JOURNAL=$(dev_part ${OSD_JOURNAL} ${OSD_JOURNAL_PARTITION})
+      fi
+    fi
+  else
+    OSD_JOURNAL=$(dev_part ${OSD_DEVICE} 2)
+  fi
+  chown ceph. ${OSD_JOURNAL}
+
   if [[ ${OSD_BLUESTORE} -eq 1 ]]; then
-    ceph-disk -v prepare ${CLI_OPTS} --bluestore ${OSD_DEVICE}
-  elif [[ ${OSD_DMCRYPT} -eq 1 ]]; then
+     CLI_OPTS="${CLI_OPTS} --bluestore"
+  else
+     CLI_OPTS="${CLI_OPTS} --filestore"
+  fi
+  if [[ ${OSD_DMCRYPT} -eq 1 ]]; then
     # the admin key must be present on the node
     if [[ ! -e $ADMIN_KEYRING ]]; then
       log "ERROR- $ADMIN_KEYRING must exist; get it from your existing mon"
@@ -65,12 +91,4 @@ function osd_disk_prepare {
 
   # watch the udev event queue, and exit if all current events are handled
   udevadm settle --timeout=600
-
-  if [[ -n "${OSD_JOURNAL}" ]]; then
-    wait_for_file ${OSD_JOURNAL}
-    chown ceph. ${OSD_JOURNAL}
-  else
-    wait_for_file $(dev_part ${OSD_DEVICE} 2)
-    chown ceph. $(dev_part ${OSD_DEVICE} 2)
-  fi
 }

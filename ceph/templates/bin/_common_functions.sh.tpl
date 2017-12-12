@@ -83,3 +83,20 @@ function get_osd_path {
 function extract_param {
   echo "${1##*=}"
 }
+
+# convert device paths like 'scsi@....'
+# to block device names, if possible.
+# only handles scsi devices right now.
+function hw_to_block {
+  DEV=$1
+  if [ ! -b ${DEV} ]; then
+    SCSI=`echo $DEV | sed 's/^scsi@//i;s/\./:/g;s/[^0-9:]//g'`
+    SDEV=`ls /sys/bus/scsi/devices/${SCSI}/block`
+    if [ ! -z $SDEV -a -b /dev/$SDEV ]; then
+      echo /dev/${SDEV}
+      return
+    fi
+  fi
+  echo ${DEV}
+  return
+}
